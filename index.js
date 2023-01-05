@@ -88,15 +88,15 @@ app.post('/start-payment', jsonParser, async(req, res) =>
     const failed_url=payment_info.failed_url;
     const error_url=payment_info.error_url;
     const {data,error}= await supabase
-    .from('transactions')
+    .from('transactions') //ispraviti da je ovo tabela payment
     .insert(
       {id:id,merchant_id:merchant_id,timestamp:timestamp,amount:amount,success_url:success_url,failed_url:failed_url,error_url:error_url,completed:completed}
       )
-  .single();
+    .single();
   
   
-  console.log(data);
-  res.send("url fronta banke");
+    console.log(data);
+    res.send('http://urlbanke?paymentId=${id}');
     //provjeriti postoji li taj korisnik banke, da li je okej, ako jeste kreirati transakciju i njen id i cuvati podatke u neku tabelu
   //vratitit url fronta banke i id transakcije
   }
@@ -107,6 +107,27 @@ app.post('/start-payment', jsonParser, async(req, res) =>
  
  
 });
+
+//dodao nebojsa
+//metoda koja vraca podatke o transakciji kako bi se forma popunila, gdje klijent unosi podatke o kartici za polacanje
+app.get('/get-payment', jsonParser, async(req, res) => 
+{
+    const paymentId =  req.query.paymentId; // iz url izvuci transaction id
+    try{
+      const {data, error}= await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', paymentId)
+      res.send();
+    }
+    catch(e)
+    {
+      console.log(e);
+    }
+    
+});
+
+
 
 //kada se popuni forma podacima za placanje gadja se ovaj endpoint
 //Dolazni podaci
