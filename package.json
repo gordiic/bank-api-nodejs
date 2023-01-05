@@ -17,10 +17,12 @@
   },
   "homepage": "https://github.com/gordiic/bank-api-nodejs#readme",
   "dependencies": {
+    "uuid": "^9.0.0",
     "@supabase/supabase-js": "^2.2.3",
     "axios": "^1.2.2",
     "cors": "^2.8.5",
     "express": "^4.18.2",
+    "nodemon": "^2.0.20",
     "winston": "^3.8.2"
   }
 }
