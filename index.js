@@ -122,6 +122,7 @@ app.post('/start-payment', jsonParser, async(req, res) =>
     paymentId:payment.id,
   }
   res.send(resp);
+
   }
   catch(e)
   {
@@ -162,6 +163,27 @@ app.post('/start-payment-qr', jsonParser, async(req, res) =>
 
 
 });
+
+
+//dodao nebojsa
+//metoda koja vraca podatke o transakciji kako bi se forma popunila, gdje klijent unosi podatke o kartici za polacanje
+app.get('/get-payment', jsonParser, async(req, res) => 
+{
+    const paymentId =  req.query.paymentId; // iz url izvuci transaction id
+    try{
+      const {data, error}= await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', paymentId)
+      res.send();
+    }
+    catch(e)
+    {
+      console.log(e);
+    }
+    
+});
+
 
 
 //kada se popuni forma podacima za placanje gadja se ovaj endpoint
