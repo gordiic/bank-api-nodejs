@@ -1,6 +1,10 @@
 const express = require('express');
 const app = express();
-const   uuid  = require('uuid');
+const { v4 } = require('uuid');
+const dbRepo=require('./dbRepository');
+const functions=require('./functions');
+const qr=require('qrcode');
+
 var bodyParser = require('body-parser')
 var jsonParser = bodyParser.json()
 
@@ -8,15 +12,15 @@ var axios = require('axios');
 
 const cors = require('cors');
 
-const { createClient } =require("@supabase/supabase-js");
+
 
 const { createLogger, format, transports } = require("winston");
 
 //database pw:12345678910nebojsa
-const supabaseUrl = 'https://qxvuqmzydpwwqvldclve.supabase.co'
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF4dnVxbXp5ZHB3d3F2bGRjbHZlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTY3MjE1NjAwNCwiZXhwIjoxOTg3NzMyMDA0fQ.P5kK_j5vTzKzNcEZOVEkOqIMmAetTFEND7Q7PCTYTnI"
-const supabase = createClient(supabaseUrl, supabaseKey)
-const bankIdentifier="123456";
+const cscUrl='http://localhost:9000'
+var bankIdentifier="123456";
+const bankFrontUrl='http://localhost:3002';
+const pccUrl='http://localhost:9000';
 const logLevels = {
   fatal: 0,
   error: 1,
@@ -35,8 +39,14 @@ const logger = createLogger({
   rejectionHandlers: [new transports.File({ filename: "rejections.log" })],
 });
 app.listen(8000, () => {
+ 
+  // console.log(new Date());
+  // console.log(Date.now())
+  //console.log("enter bank db info...");
+  //dbRepo.setupDB();
+ 
   console.log(`Server Started on ${8000}`);
-  
+
 }
   );
 
@@ -64,49 +74,95 @@ app.listen(8000, () => {
 //   payment_url,
 //   payment_id
 // }
-app.post('/start-payment', jsonParser, async(req, res) => 
+app.get('/get-payment-info',jsonParser,async(req,res)=>
+{
+  console.log('get-payment-info');
+  console.log(req.query);
+  
+  const payment=await dbRepo.getPaymentRequestByPaymentId(req.query.id);
+  console.log(payment);
+  const merchant=await dbRepo.getAccountById(payment.merchant_id);
+  merchant.balance=0;
+  merchant.exp_date=0;/// e sad ovde treba da od ovih podataka generisem qr i da saljem na front znaci qr,paymentId i neke podatke o merchantu da se ispise kao kome se uplacuje novac i cao
+  //QR kod treba da sadrži valutu i iznos koji se plaća, broj računa primaoca, naziv primaoca plaćanja itd.
+  const qrObject={
+    c:'USD',
+    a:payment.amount,
+    m:merchant.pan,
+    n:merchant.name
+  };
+  const qrCode=await functions.generateQr(qrObject);  
+  res.send({payment:payment,merchant_account:merchant.pan,merchant_name:merchant.name,qr:qrCode});
+});
+app.post('/start-payment', jsonParser, async(req, res) =>
 {
   console.log("start payment");
-  // const paymentInfo={
-  //   merchant_id:merchantBankId,
-  //   merchant_password:merchanBankPassword,
-  //   amount:total,
-  //   merchant_order_id:paymentId,
-  //   merchant_timestamp:Math.round(+new Date()/1000),
-  //   success_url:pspSuccessUrl,
-  //   failed_url:pspFailedUrl,
-  //   error_url:pspErrorUrl
-  // }
   const payment_info=req.body;
   try{
-    const id= uuid.v4();
-    const merchant_id= payment_info.merchant_id;
-    const timestamp= payment_info.merchant_timestamp;
-    const amount= Number(payment_info.amount);
-    const completed= false;
-    const success_url=payment_info.success_url;
-    const failed_url=payment_info.failed_url;
-    const error_url=payment_info.error_url;
-    const {data,error}= await supabase
-    .from('transactions')
-    .insert(
-      {id:id,merchant_id:merchant_id,timestamp:timestamp,amount:amount,success_url:success_url,failed_url:failed_url,error_url:error_url,completed:completed}
-      )
-  .single();
-  
-  
+    const payment={
+      payment_id:payment_info.payment_id,
+      id:v4(),
+      merchant_id: payment_info.merchant_id,
+      timestamp:payment_info.merchant_timestamp,
+      amount:Number(payment_info.amount),
+      completed:false,
+      success_url:payment_info.success_url,
+      failed_url:payment_info.failed_url,
+       error_url:payment_info.error_url
+    }
+    const data= await dbRepo.addPaymentRequest(payment);
+
+
   console.log(data);
-  res.send("url fronta banke");
-    //provjeriti postoji li taj korisnik banke, da li je okej, ako jeste kreirati transakciju i njen id i cuvati podatke u neku tabelu
-  //vratitit url fronta banke i id transakcije
+  console.log(`${bankFrontUrl}?id=${payment.id}`);
+ // res.send(`${bankFrontUrl}?id=${payment.id}`);//saljemo url fronta a on se onda redirektuje na taj url i dodaje payment id u query????
+                          //da bi bank front mogao payment id da prosledi metodi finish-payment ovde na apiju banke
+   const resp={
+    url:bankFrontUrl,
+    paymentId:payment.id,
+  }
+  res.send(resp);
   }
   catch(e)
   {
     console.log(e);
   }
- 
- 
+
+
 });
+app.post('/start-payment-qr', jsonParser, async(req, res) =>
+{
+  console.log("start payment qr");
+  const payment_info=req.body;
+  try{
+    const payment={
+      payment_id:payment_info.payment_id,
+      id:v4(),
+      merchant_id: payment_info.merchant_id,
+      timestamp:payment_info.merchant_timestamp,
+      amount:Number(payment_info.amount),
+      completed:false,
+      success_url:payment_info.success_url,
+      failed_url:payment_info.failed_url,
+       error_url:payment_info.error_url
+    }
+    console.log(payment);
+    const data= await dbRepo.addPaymentRequest(payment);
+  console.log(data);
+  const resp={
+    url:`${bankFrontUrl}/qr`,
+    paymentId:payment.id,
+  }
+  res.send(resp);
+  }
+  catch(e)
+  {
+    console.log(e);
+  }
+
+
+});
+
 
 //kada se popuni forma podacima za placanje gadja se ovaj endpoint
 //Dolazni podaci
@@ -116,22 +172,100 @@ app.post('/start-payment', jsonParser, async(req, res) =>
 //   card_h_name,
 //   exp_date
 // }
-app.get('/finish-payment', jsonParser, async(req, res) => 
+app.post('/finish-payment', jsonParser, async(req, res) =>
 {
-  //TEODORA 5.1.2023 17:12  ->> 
-    // nije mi jasno sta je acquirer timestamp
-    //Kako je meni logicno: metoda koju smo zaj napravili upise u bazu i vrati pspu link do bank fronta...onda se redirektuje na taj url i tamo
-    // popunjava info: pan,csc,exp_date,name....e sad nama treba id od platioca al kako ja da znam svoj id kad placam nesto...to je prob al dobro mozda nam ne treba nz
-    //trebalo bi da mi taj id nadjemo preko pana al aj nz...
-    //zatim te info koje sam navela dodju u ovu metodu finish payment, trazi se taj pan u bazi ove banke ako se nadje proverava se balans, ako ima sredstava skine mu se,
-    //mercentu se doda i redirektuje se na one uspesne urlove i stavi se u bazi da je transakcija completed
-    //problem je sto se ovo moje ne poklapa sa ovim sto si ispod napisao a verujem da si iz specifikacije pisao
-
-  // Na sajtu banke prodavca, kupac unosi PAN, security code, card holder name i datum do kada kartica važi. 
+  try{
+    console.log(`finish payment: data->\n${JSON.stringify(req.body)}`);
+    console.log('1')
+    const pan=req.body.pan;
+    const csc=req.body.csc;
+    const name=req.body.card_h_name;
+    const exp_date=req.body.exp_date;
+    const payment_id=req.body.payment_id;
+    console.log('11')
+    const amount=await dbRepo.getAmount(payment_id);//   change->  !!!!!!!!!!!!!!from payment-requests db
+    console.log('2')
+    const merchant_id= await dbRepo.getMerchantByPaymentId(payment_id);
+    console.log('3')
+    const data=await dbRepo.getAccountByPan(pan);
+    console.log('4')
+    console.log(data);
+    const timestamp=Date.now();
+    const payment_request=await dbRepo.getPaymentRequestByPaymentId(payment_id);
+    console.log(payment_request);
+    if(data===null)
+    {
+      console.log('saljemo zahtev pcc-u');
+      const pccRequestData={
+        pan:pan,
+        csc:csc,
+        card_h_name:name,
+        exp_date:exp_date,
+        timestamp:timestamp,
+        transaction_id:payment_id,
+        amount:amount
+      };
+      const resp= await dbRepo.addTransaction({id:payment_id,merchant_id:merchant_id,payer_id:null,state:'pending',amount:amount,timestamp:timestamp});//payer_id:null jer mi ne znamo njegov id, samo acc num
+      const response=await axios.post(`${cscUrl}/payment-request`,pccRequestData);
+      console.log(response.data);///ovde puca al sve pre toga je ok!!!!!!!!!!!
+      const payment_request=await dbRepo.getPaymentRequestByPaymentId(response.transaction_id);
+      if(response.data.successful)
+      {
+        //uvecaj balance
+        const merchantAccount = await dbRepo.getAccountById(merchant_id);
+        const newBalanceMerchant=merchantAccount.balance+amount;
+        const dataMerchant= await dbRepo.updateBalance(merchant_id,newBalanceMerchant);
+        const date=await dbRepo.updateTransactionState(response.transaction_id,'executed');
+        res.send(`${payment_request.success_url}?payment_id=${payment_request.payment_id}`);
+      }
+      else
+      {
+        const date=await dbRepo.updateTransactionState(response.transaction_id,'failed');
+        
+      }
+    }
+    else if( data.length>0)//payer is in this bank db
+    {
+      console.log("payer info->",data[0])
+      const account=data[0];
+      
+      if(functions.checkAccountInfo({csc,exp_date,name},account))
+        {
+          if(account.balance>=amount)
+          {
+            console.log('ima dovoljno stanja na racunu');
+            const data = await dbRepo.getAccountById(merchant_id);
+            const merchantAccount=data[0];
+            const newBalancePayer=account.balance-amount;
+            const newBalanceMerchant=merchantAccount.balance+amount;
+            const dataPayer= await dbRepo.updateBalance(account.id,newBalancePayer);
+            const dataMerchant= await dbRepo.updateBalance(merchant_id,newBalanceMerchant);
+            ///upis transakcije u bazu
+            const resp= await dbRepo.addTransaction({id:payment_id,merchant_id:merchant_id,payer_id:account.id,state:'executed',amount:amount,timestamp:timestamp})
+            res.send(`${payment_request.success_url}?payment_id=${payment_request.payment_id}`);
+          }
+          else{//ako nema dovoljno stanja upisujemo transakciju ali successful=false
+            console.log('nema dovoljno stanja na racunu');
+            const resp= await dbRepo.addTransaction({id:payment_id,merchant_id:merchant_id,payer_id:account.id,state:'failed',amount:amount,timestamp:timestamp});
+            res.send(`${payment_request.failed_url}?payment_id=${payment_request.payment_id}`);
+          }
+        }
+    }
+    else//we call csc for information about this payers bank
+    {
+      
+    }
+  }
+  catch(e)
+  {
+    res.send(`${payment_request.error_url}?payment_id=${payment_request.payment_id}`);
+  }
+  
+  // Na sajtu banke prodavca, kupac unosi PAN, security code, card holder name i datum do kada kartica važi.
   // Vrši se provera podataka.
-  // Ukoliko je banka prodavca ista kao i banka kupca, vrši se provera raspoloživih sredstava na računu kupca, 
+  // Ukoliko je banka prodavca ista kao i banka kupca, vrši se provera raspoloživih sredstava na računu kupca,
   // rezervišu se sredstva, ukoliko postoje, i dalji tok skače na korak 7.
-  // U suprotnom, banka prodavca generiše ACQUIRER_ORDER_ID (ID transakcije - tip Number(10)) i  ACQUIRER_TIMESTAMP 
+  // U suprotnom, banka prodavca generiše ACQUIRER_ORDER_ID (ID transakcije - tip Number(10)) i  ACQUIRER_TIMESTAMP
   // i zajedno sa podacima o kartici šalje zahtev ka PCC.
   //Odlazni podaci-zahtjev servicu kartica
   // {
@@ -144,9 +278,9 @@ app.get('/finish-payment', jsonParser, async(req, res) =>
   // }
 
 
-  //7. Banka prodavca prosleđuje podatke o stanju transakcije, 
-  //uz MERCHANT_ORDER_ID, ACQUIRER_ORDER_ID, ACQUIRER_TIMESTAMP i PAYMENT_ID PSP-u. 
-  //Kupac se prebacuje na stranicu koja prikazuje status izvršavanja transakcije (uspeh, neuspeh, greška). 
+  //7. Banka prodavca prosleđuje podatke o stanju transakcije,
+  //uz MERCHANT_ORDER_ID, ACQUIRER_ORDER_ID, ACQUIRER_TIMESTAMP i PAYMENT_ID PSP-u.
+  //Kupac se prebacuje na stranicu koja prikazuje status izvršavanja transakcije (uspeh, neuspeh, greška).
   //U slučaju uspeha, dobija pristup uslugama koje je kupio.
   //Odlazni podaci
   // {
@@ -155,14 +289,6 @@ app.get('/finish-payment', jsonParser, async(req, res) =>
   //   acquirer_timestamp,
   //   payment_id,// +podaci o uspjehu/neuspjehu transakcije
   // }
-    try{
-       
-      }
-      catch(e)
-      {
-        console.log(e);
-      }
-    
 });
 
 //endpoint koji gadja card service ukoliko je korisnik pripadnik tudje banke
@@ -178,7 +304,7 @@ app.get('/finish-payment', jsonParser, async(req, res) =>
   //Banka kupca prihvata zahtev i, ako je ispravan i kupac ima dovoljno novca, vrši se rezervacija sredstava. (vjerovatno se i amount salje)
   // Ocigledno ce trebati da banci javi prva banka da je odradjeno da vise ne bi bilo rezervisano vec izvrseno placanje
   // Ova metoda ce vratiti podatke ukoliko je sve super rezervisano i na osnovu ovog issuer_order_id kada mu ga posalje on ce tu transakciju komitovati
-  //Banka kupca prosleđuje rezultat transakcije nazad PCC-u. Odgovor, pored rezultata transakcije, 
+  //Banka kupca prosleđuje rezultat transakcije nazad PCC-u. Odgovor, pored rezultata transakcije,
   //treba da sadrži i ACQUIRER_ORDER_ID, ACQUIRER_TIMESTAMP, ISSUER_ORDER_ID i ISSUER_TIMESTAMP.
   //Odlazni podaci
   // {
@@ -187,16 +313,50 @@ app.get('/finish-payment', jsonParser, async(req, res) =>
   //   issuer_order_id,
   //   issuer_timestamp
   // }
-app.get('/finish-payment-fromanouther-bank', jsonParser, async(req, res) => 
+
+  // req.body->
+  // const pccRequestData={
+  //   pan:pan,
+  //   csc:csc,
+  //   card_h_name:name,
+  //   exp_date:exp_date,
+  //   timestamp:timestamp,
+  //   transaction_id:id,
+  //   amount:amount
+  // };
+  {
+    //   successful,
+    //   acquirerer_order_id,
+    //   acquirerer_timestamp,
+    //   issuer_order_id,
+    //   issuer_timestamp
+    // }
+app.post('/extern-payment-request', jsonParser, async(req, res) =>
 {
     //azurirati podatke o korisniku i kreirati u tabelu transakciju da se desila
-
-    try{
-       
-      }
-      catch(e)
+    const info=req.body;
+    const info2={
+      csc:info.csc,
+      name:info.card_h_name,
+      exp_date:info.exp.date
+    }
+    info.newTimestamp=Date.now();
+    info.id=v4();
+    const data=dbRepo.getAccountByPan(info.pan);
+    if(data.length>0)
+    {
+      if(functions.checkAccountInfo(info2,data[0]))
       {
-        console.log(e);
+        if(data[0].balance>=info.amount)
+        {
+          const data=dbRepo.updateBalance(data[0].id,data[0].balance-info.amount);
+          const resp= await addTransaction({id:info.id,merchant_id:'',payer_id:data[0].id,successful:'executed',amount:info.amount,timestamp:info.newTimestamp});
+          res.send({successful:true,acquirerer_id:info.transaction_id,acquirerer_timestamp:info.timestamp,issuer_id:info.id,issuer_timestamp:info.newTimestamp});
+        }
+        else{//ako nema dovoljno stanja upisujemo transakciju ali successful=false
+          const resp= await addTransaction({id:info.id,merchant_id:'',payer_id:account.id,successful:'failed',amount:info.amount,timestamp:info.newTimestamp});
+          res.send({successful:false,acquirerer_id:info.transaction_id,acquirerer_timestamp:info.timestamp,issuer_id:info.id,issuer_timestamp:info.newTimestamp});
+        }
       }
-    
-});
+    }
+  })};
