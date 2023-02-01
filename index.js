@@ -78,8 +78,16 @@ app.get('/get-payment-info',jsonParser,async(req,res)=>
 {
   console.log('get-payment-info');
   console.log(req.query);
+  if(req.query.id===null)
+  {
+    
+  }
   
   const payment=await dbRepo.getPaymentRequestByPaymentId(req.query.id);
+  if(payment===null)
+  {
+    res.send({successful:false});
+  }
   console.log(payment);
   const merchant=await dbRepo.getAccountById(payment.merchant_id);
   merchant.balance=0;
@@ -100,7 +108,7 @@ app.post('/start-payment', jsonParser, async(req, res) =>
   const payment_info=req.body;
   try{
     const payment={
-      payment_id:payment_info.payment_id,
+      payment_id:payment_info.merchant_order_id,
       id:v4(),
       merchant_id: payment_info.merchant_id,
       timestamp:payment_info.merchant_timestamp,
@@ -198,23 +206,16 @@ app.post('/finish-payment', jsonParser, async(req, res) =>
 {
   try{
     console.log(`finish payment: data->\n${JSON.stringify(req.body)}`);
-    console.log('1')
     const pan=req.body.pan;
     const csc=req.body.csc;
     const name=req.body.card_h_name;
     const exp_date=req.body.exp_date;
     const payment_id=req.body.payment_id;
-    console.log('11')
-    const amount=await dbRepo.getAmount(payment_id);//   change->  !!!!!!!!!!!!!!from payment-requests db
-    console.log('2')
-    const merchant_id= await dbRepo.getMerchantByPaymentId(payment_id);
-    console.log('3')
+    const amount=await dbRepo.getAmount(payment_id);
+    const merchant_id= await dbRepo.getMerchantIdByPaymentId(payment_id);
     const data=await dbRepo.getAccountByPan(pan);
-    console.log('4')
-    console.log(data);
     const timestamp=Date.now();
     const payment_request=await dbRepo.getPaymentRequestByPaymentId(payment_id);
-    console.log(payment_request);
     if(data===null)
     {
       console.log('saljemo zahtev pcc-u');
@@ -229,16 +230,16 @@ app.post('/finish-payment', jsonParser, async(req, res) =>
       };
       const resp= await dbRepo.addTransaction({id:payment_id,merchant_id:merchant_id,payer_id:null,state:'pending',amount:amount,timestamp:timestamp});//payer_id:null jer mi ne znamo njegov id, samo acc num
       const response=await axios.post(`${cscUrl}/payment-request`,pccRequestData);
-      console.log(response.data);///ovde puca al sve pre toga je ok!!!!!!!!!!!
-      const payment_request=await dbRepo.getPaymentRequestByPaymentId(response.transaction_id);
+      const payment_request=await dbRepo.getPaymentRequestByPaymentId(response.data.acquirerer_id);
       if(response.data.successful)
       {
+        console.log('uvecavanje balansa')
         //uvecaj balance
         const merchantAccount = await dbRepo.getAccountById(merchant_id);
         const newBalanceMerchant=merchantAccount.balance+amount;
         const dataMerchant= await dbRepo.updateBalance(merchant_id,newBalanceMerchant);
         const date=await dbRepo.updateTransactionState(response.transaction_id,'executed');
-        res.send(`${payment_request.success_url}?payment_id=${payment_request.payment_id}`);
+        res.send({successful:true,payment_id:payment_request.payment_id,url:payment_request.success_url});
       }
       else
       {
@@ -246,10 +247,9 @@ app.post('/finish-payment', jsonParser, async(req, res) =>
         
       }
     }
-    else if( data.length>0)//payer is in this bank db
+    else//payer is in this bank db
     {
-      console.log("payer info->",data[0])
-      const account=data[0];
+      const account=data;
       
       if(functions.checkAccountInfo({csc,exp_date,name},account))
         {
@@ -257,30 +257,31 @@ app.post('/finish-payment', jsonParser, async(req, res) =>
           {
             console.log('ima dovoljno stanja na racunu');
             const data = await dbRepo.getAccountById(merchant_id);
-            const merchantAccount=data[0];
+            const merchantAccount=data;
             const newBalancePayer=account.balance-amount;
             const newBalanceMerchant=merchantAccount.balance+amount;
             const dataPayer= await dbRepo.updateBalance(account.id,newBalancePayer);
             const dataMerchant= await dbRepo.updateBalance(merchant_id,newBalanceMerchant);
             ///upis transakcije u bazu
             const resp= await dbRepo.addTransaction({id:payment_id,merchant_id:merchant_id,payer_id:account.id,state:'executed',amount:amount,timestamp:timestamp})
-            res.send(`${payment_request.success_url}?payment_id=${payment_request.payment_id}`);
+            const a=await dbRepo.updatePaymentCompleted(payment_id);
+            res.send({successful:true,url:payment_request.success_url,payment_id:payment_request.payment_id});
           }
           else{//ako nema dovoljno stanja upisujemo transakciju ali successful=false
             console.log('nema dovoljno stanja na racunu');
             const resp= await dbRepo.addTransaction({id:payment_id,merchant_id:merchant_id,payer_id:account.id,state:'failed',amount:amount,timestamp:timestamp});
-            res.send(`${payment_request.failed_url}?payment_id=${payment_request.payment_id}`);
+            res.send({successful:false,url:payment_request.failed_url,payment_id:payment_request.payment_id});
           }
         }
-    }
-    else//we call csc for information about this payers bank
-    {
-      
+        else
+        {
+          res.send({successful:false,message:'Invalid account info'})
+        }
     }
   }
   catch(e)
   {
-    res.send(`${payment_request.error_url}?payment_id=${payment_request.payment_id}`);
+    res.send({successful:false,url:payment_request.failed_url,payment_id:payment_request.payment_id});
   }
   
   // Na sajtu banke prodavca, kupac unosi PAN, security code, card holder name i datum do kada kartica važi.

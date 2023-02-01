@@ -1,9 +1,11 @@
 const { createClient, FunctionsError } =require("@supabase/supabase-js");
+const bcrypt = require('bcrypt');
+
 const prompt = require("prompt-sync")({ sigint: true });
 var supabaseUrl = 'https://qxvuqmzydpwwqvldclve.supabase.co'
 var supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF4dnVxbXp5ZHB3d3F2bGRjbHZlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTY3MjE1NjAwNCwiZXhwIjoxOTg3NzMyMDA0fQ.P5kK_j5vTzKzNcEZOVEkOqIMmAetTFEND7Q7PCTYTnI"
 var supabase = createClient(supabaseUrl, supabaseKey)
-exports.getMerchantByPaymentId= async function (payment_id)
+exports.getMerchantIdByPaymentId= async function (payment_id)
 {
   const {data,error} = await supabase
             .from('payment-requests')
@@ -19,13 +21,18 @@ exports.getAmount= async function (payment_id)
             .from('payment-requests')
             .select()
             .eq('id',payment_id);
-            console.log(error);
-            console.log(data[0]);
   const amount=data[0].amount;
   return amount;
 }
 exports.getAccountByPan=async function(pan)
 {
+  
+  
+  //var encPan=null;
+  // bcrypt.hash(myPlaintextPassword, saltRounds, function(err, hash) {
+  //   // Store hash in your password DB.
+  //   encPan=hash
+  // });
     let {data,error}= await supabase
     .from('bank-accounts')
     .select()
@@ -93,5 +100,15 @@ exports.updateTransactionState=async function(id,state)
           .from('transactions')
           .update({state:state})
           .eq('id',id);
+          return data;
+}
+exports.updatePaymentCompleted=async function(id)
+{
+    const {data,error}= await supabase
+          .from('payment-requests')
+          .update({completed:true})
+          .eq('id',id);
+    console.log(data);
+    console.log(error)
           return data;
 }
